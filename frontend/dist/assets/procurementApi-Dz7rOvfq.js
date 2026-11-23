@@ -1,0 +1,1 @@
+import{i as n,b as r}from"./index-BVE0YFlo.js";function s(e){return r(`/v1/design/revisions/${e}/procurement-impact`)}function c(e,t){return n(`/v1/design/projects/${e}/procurement/setup`,{group_by:t})}function u(e){return r(`/v1/design/projects/${e}/procurement`)}export{s as a,u as f,c as s};

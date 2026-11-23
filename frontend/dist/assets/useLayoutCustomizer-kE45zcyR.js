@@ -1,0 +1,1 @@
+import{r,j as c}from"./vendor-react-DjB7E_1B.js";import{L as p}from"./LayoutEditorDrawer-CU6xbjwx.js";function m(t,s){const[e,o]=r.useState(null),n=r.useCallback(u=>l=>o({...u,locale:l}),[]),a=e?c.jsx(p,{open:!0,onClose:()=>o(null),layoutKey:t,recordId:e.recordId,projectId:e.projectId,locale:e.locale,title:s}):null;return{open:n,drawer:a}}export{m as u};

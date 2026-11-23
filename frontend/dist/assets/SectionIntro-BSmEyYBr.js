@@ -1,0 +1,1 @@
+import{j as m}from"./vendor-react-DjB7E_1B.js";import{c as n}from"./index-BVE0YFlo.js";import"./vendor-i18n-BFj3A6ej.js";import"./vendor-dompurify-ChJSIbGG.js";function a({storageKey:o,title:r,children:t,links:i,more:s}){return m.jsx(n,{storageKey:o,title:r,links:i,more:s,children:t})}export{a as S};

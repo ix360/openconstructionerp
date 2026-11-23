@@ -53,7 +53,8 @@
 **/venv
 **/env
 **/build
-**/dist
+# **/dist
+!frontend/dist/**
 **/*.egg
 
 # ── Node / frontend build ───────────────────────────────────────────
@@ -62,7 +63,9 @@
 **/.turbo
 **/.cache
 **/.parcel-cache
-frontend/dist
+# frontend/dist (included in build context)
+!frontend/dist
+!frontend/dist/**
 frontend/coverage
 frontend/test-results
 frontend/playwright-report
