@@ -1,0 +1,355 @@
+// DDC-CWICR-OE: DataDrivenConstruction · OpenConstructionERP​‌‍⁠​‌‍⁠​‌‍⁠​‌‍⁠
+// Copyright (c) 2026 Artem Boiko / DataDrivenConstruction
+/**
+ * DemoSwitcherBar - tab strip on the public hosted demo that switches between
+ * the showcase demos. Rendered only when the backend reports
+ * `demo_mode: true`. Projects are matched by the `demo_id` marker the demo
+ * installer writes into project metadata, so no ids are hardcoded.
+ *
+ * Each demo is a company type with its own look and a menu cut to its work
+ * (`demoProfiles.ts`). After sign-in the visitor first picks one on
+ * `/onboarding/demo`; a `?demo=<slug>` link from the website skips the picker.
+ */
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
+import { useLocation, useNavigate } from 'react-router-dom';
+import clsx from 'clsx';
+import { ChevronDown, Languages, LayoutGrid, Lock } from 'lucide-react';
+import { changeLanguage, getLanguageByCode } from '@/app/i18n';
+import { useMenuLayoutStore } from '@/app/layout/useMenuLayoutStore';
+import { apiGet } from '@/shared/lib/api';
+import { ACCENT_SWATCH } from '@/shared/lib/appearance';
+import {
+  DEMO_PROFILES,
+  demoProfile,
+  applyDemoMenuStyle,
+  readChosenDemo,
+  writeChosenDemo,
+  type DemoSlug,
+} from '@/shared/lib/demoProfiles';
+import { demoFaceFor } from '@/shared/lib/demoFaces';
+import { marketSwitchValue, uiLanguageFor } from '@/shared/lib/demoScope';
+import { fetchProjectList } from '@/shared/lib/projectList';
+import { HexMark } from '@/shared/ui/HexMark';
+import { useAppearanceStore } from '@/stores/useAppearanceStore';
+import { useDemoSessionStore } from '@/stores/useDemoSessionStore';
+import { useModuleStore } from '@/stores/useModuleStore';
+import { useProjectContextStore } from '@/stores/useProjectContextStore';
+
+export const DEMO_SWITCHER_SLUGS = DEMO_PROFILES.map((p) => p.slug);
+
+export const DEMO_CHOOSER_PATH = '/onboarding/demo';
+
+const PICK_KEY = 'oe_demo_pick';
+
+/** Remember a `?demo=<slug>` deep link for after sign-in. */
+export function captureDemoPick(search: string = window.location.search): void {
+  try {
+    const slug = new URLSearchParams(search).get('demo');
+    if (slug && (DEMO_SWITCHER_SLUGS as readonly string[]).includes(slug)) {
+      sessionStorage.setItem(PICK_KEY, slug);
+    }
+  } catch {
+    // Storage blocked: the deep link is a convenience, the tabs still work.
+  }
+}
+
+const MENU_MODE_KEY = 'oe_demo_menu_mode';
+
+/**
+ * Put the sidebar in the demo's work mode: its short list of daily screens,
+ * the rest of its sections under "More modules". Opening a demo always does;
+ * a reload does once per session, so a mode the visitor picks afterwards stays.
+ */
+export function applyDemoMenuPreset(slug: string | null, force: boolean): void {
+  const profile = demoProfile(slug);
+  if (!profile) return;
+  let applied: string | null = null;
+  try {
+    applied = sessionStorage.getItem(MENU_MODE_KEY);
+  } catch {
+    applied = null;
+  }
+  if (!force && applied === profile.slug) return;
+  useMenuLayoutStore.getState().dispatch({ type: 'setMode', mode: profile.menuMode });
+  try {
+    sessionStorage.setItem(MENU_MODE_KEY, profile.slug);
+  } catch {
+    // Storage blocked: the mode is applied again on the next reload, nothing breaks.
+  }
+}
+
+interface DemoProject {
+  id: string;
+  name: string;
+  metadata?: Record<string, unknown> | null;
+}
+
+/** Demo mode, the demo projects this account can see, and how to open one. */
+export function useDemoProjects() {
+  const navigate = useNavigate();
+  const setActiveProject = useProjectContextStore((s) => s.setActiveProject);
+  const setAppearance = useAppearanceStore((s) => s.setAppearance);
+  const setHiddenGroups = useModuleStore((s) => s.setHiddenGroups);
+  const setDemo = useDemoSessionStore((s) => s.setDemo);
+
+  const { data: sys } = useQuery<{ demo_mode?: boolean }>({
+    queryKey: ['system-status'],
+    queryFn: () => apiGet<{ demo_mode?: boolean }>('/system/status'),
+    retry: false,
+    staleTime: Infinity,
+  });
+  const demoMode = sys?.demo_mode === true;
+
+  const { data: projects } = useQuery({
+    queryKey: ['projects'],
+    queryFn: () => fetchProjectList<DemoProject[]>(),
+    staleTime: 60_000,
+    enabled: demoMode,
+  });
+
+  const bySlug = useMemo(() => {
+    const map = new Map<string, DemoProject>();
+    for (const p of projects ?? []) {
+      const slug = typeof p.metadata?.demo_id === 'string' ? p.metadata.demo_id : '';
+      if (slug && !map.has(slug)) map.set(slug, p);
+    }
+    return map;
+  }, [projects]);
+
+  const open = useCallback(
+    (slug: DemoSlug) => {
+      const p = bySlug.get(slug);
+      const profile = demoProfile(slug);
+      if (!p || !profile) return;
+      setAppearance(profile.appearance);
+      // The menu follows the demo through `useDemoModules`; sections hidden
+      // by an earlier build of the switcher are let go here.
+      setHiddenGroups([]);
+      applyDemoMenuStyle(profile.menuStyle);
+      writeChosenDemo(slug);
+      setDemo(slug);
+      applyDemoMenuPreset(slug, true);
+      setActiveProject(p.id, p.name);
+      navigate(`/projects/${p.id}`);
+    },
+    [bySlug, navigate, setActiveProject, setAppearance, setHiddenGroups, setDemo],
+  );
+
+  return { demoMode, loaded: projects !== undefined, bySlug, open };
+}
+
+/**
+ * One control for language and market: picking "Deutsch · Deutschland" switches
+ * the interface to German first, then opens the German demo with its DIN 276
+ * data, so the screen never shows German data under a half-switched menu. The
+ * cards and tabs open a demo and leave the visitor's language alone, so the
+ * select names a market only while the screen really is in its language.
+ */
+export function DemoMarketSwitch({ className, compact = false }: { className?: string; compact?: boolean }) {
+  const { t, i18n } = useTranslation();
+  const { bySlug, open } = useDemoProjects();
+  const active = useDemoSessionStore((s) => s.slug);
+  const [busy, setBusy] = useState(false);
+  const available = DEMO_PROFILES.filter((p) => bySlug.has(p.slug));
+  if (available.length === 0) return null;
+  const current = marketSwitchValue(active, available, i18n.language);
+
+  const choose = async (slug: string) => {
+    const profile = demoProfile(slug);
+    if (!profile) return;
+    setBusy(true);
+    try {
+      await changeLanguage(profile.locale);
+      open(profile.slug);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const label = t('demo_market.label', { defaultValue: 'Language and market' });
+  const hint = t('demo_market.hint', {
+    defaultValue: 'Sets the interface language and opens the demo for that country, with its own data and standards.',
+  });
+  return (
+    <label
+      className={clsx(
+        'flex min-w-0 items-center gap-2 rounded-lg border border-border-light bg-surface-primary px-2.5 py-1.5 text-sm text-content-secondary focus-within:ring-2 focus-within:ring-oe-blue',
+        className,
+      )}
+      title={hint}
+    >
+      <Languages size={16} className="shrink-0" aria-hidden="true" />
+      {!compact && <span className="hidden shrink-0 font-medium sm:inline">{label}</span>}
+      <select
+        data-testid="demo-market-switch"
+        aria-label={label}
+        value={current}
+        disabled={busy}
+        aria-busy={busy || undefined}
+        onChange={(e) => void choose(e.target.value)}
+        className="min-w-0 flex-1 cursor-pointer truncate bg-transparent font-semibold text-content-primary outline-none disabled:cursor-wait disabled:opacity-60"
+      >
+        {/* The interface is not in a listed market's language: name the language it is in. */}
+        {current === '' && (
+          <option value="" disabled>
+            {uiLanguageFor(i18n.language).name}
+          </option>
+        )}
+        {available.map((p) => (
+          <option key={p.slug} value={p.slug}>
+            {`${getLanguageByCode(p.locale).name} · ${t(`${p.stem}.country`)} · ${p.standards}`}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+export function DemoSwitcherBar() {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const activeProjectId = useProjectContextStore((s) => s.activeProjectId);
+  const { demoMode, loaded, bySlug, open } = useDemoProjects();
+  // On a phone the strip folds to one line; the tabs open on demand.
+  const [expanded, setExpanded] = useState(false);
+
+  // The menu style follows the chosen demo across reloads and goes away with the demo bar.
+  useEffect(() => {
+    if (!demoMode) return undefined;
+    const chosen = readChosenDemo();
+    applyDemoMenuStyle(demoProfile(chosen)?.menuStyle ?? null);
+    applyDemoMenuPreset(chosen, false);
+    return () => applyDemoMenuStyle(null);
+  }, [demoMode]);
+
+  useEffect(() => {
+    if (!demoMode || !loaded) return;
+    let slug: string | null = null;
+    try {
+      slug = sessionStorage.getItem(PICK_KEY);
+      if (slug) sessionStorage.removeItem(PICK_KEY);
+    } catch {
+      slug = null;
+    }
+    const picked = demoProfile(slug);
+    if (picked && bySlug.has(picked.slug)) {
+      open(picked.slug);
+      return;
+    }
+    // First stop after sign-in is the picker, once per browser session.
+    if (!readChosenDemo() && pathname !== DEMO_CHOOSER_PATH && bySlug.size > 0) {
+      navigate(DEMO_CHOOSER_PATH, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demoMode, loaded]);
+
+  // A tab whose project this account cannot see would only sit there greyed out.
+  const available = DEMO_PROFILES.filter((p) => bySlug.has(p.slug));
+  if (!demoMode || available.length === 0 || pathname === DEMO_CHOOSER_PATH) return null;
+  const openProfile = available.find((p) => bySlug.get(p.slug)?.id === activeProjectId);
+  const switchLabel = t('demo_switcher.switch', { defaultValue: 'Switch demo' });
+
+  return (
+    <nav
+      aria-label={t('demo_switcher.label', { defaultValue: 'Demo projects' })}
+      className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border-light bg-surface-primary/90 px-4 py-1.5 text-sm backdrop-blur lg:flex-nowrap"
+    >
+      <button
+        type="button"
+        onClick={() => navigate(DEMO_CHOOSER_PATH)}
+        className="flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1.5 font-semibold text-content-secondary hover:bg-surface-secondary hover:text-content-primary"
+      >
+        <LayoutGrid size={16} className="shrink-0" />
+        {t('demo_switcher.label', { defaultValue: 'Demo projects' })}
+      </button>
+      <button
+        type="button"
+        data-testid="demo-switcher-toggle"
+        aria-expanded={expanded}
+        aria-controls="oe-demo-switcher-body"
+        aria-label={switchLabel}
+        title={switchLabel}
+        onClick={() => setExpanded((v) => !v)}
+        className="ms-auto flex min-w-0 items-center gap-1 rounded-lg px-2 py-1.5 font-medium text-content-primary hover:bg-surface-secondary sm:hidden"
+      >
+        <span className="truncate">
+          {openProfile ? t(`demo_switcher.tab_${openProfile.slug.replace(/-/g, '_')}`) : switchLabel}
+        </span>
+        <ChevronDown size={16} className={clsx('shrink-0 transition-transform', expanded && 'rotate-180')} aria-hidden="true" />
+      </button>
+      <div
+        id="oe-demo-switcher-body"
+        data-testid="demo-switcher-body"
+        className={clsx(
+          expanded ? 'flex' : 'hidden',
+          'w-full min-w-0 flex-wrap items-center gap-x-3 gap-y-2 sm:flex sm:w-auto sm:flex-1 lg:flex-nowrap',
+        )}
+      >
+        {/* One line on a desktop: the tabs scroll sideways rather than wrap under the switch. */}
+        <div
+          role="tablist"
+          className="flex min-w-0 flex-wrap gap-1.5 lg:flex-1 lg:flex-nowrap lg:overflow-x-auto lg:[scrollbar-width:none] lg:[&::-webkit-scrollbar]:hidden"
+        >
+          {available.map((profile) => {
+            const p = bySlug.get(profile.slug);
+            const active = !!p && p.id === activeProjectId;
+            const face = demoFaceFor(profile.slug);
+            return (
+              <button
+                key={profile.slug}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                title={p?.name}
+                onClick={() => {
+                  setExpanded(false);
+                  open(profile.slug);
+                }}
+                className={clsx(
+                  'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border py-1 pe-3.5 ps-3 text-[13px] font-medium transition-colors',
+                  active
+                    ? 'border-transparent bg-oe-blue text-white shadow-sm'
+                    : 'border-border-light text-content-secondary hover:bg-surface-secondary hover:text-content-primary',
+                )}
+              >
+                <HexMark
+                  inline
+                  src={face.src}
+                  kind={face.kind}
+                  accent={active ? 'rgba(255,255,255,0.92)' : ACCENT_SWATCH[profile.appearance.accent]}
+                  active={active}
+                  size={22}
+                  className="-my-1 -ms-1.5"
+                />
+                {t(`demo_switcher.tab_${profile.slug.replace(/-/g, '_')}`)}
+              </button>
+            );
+          })}
+        </div>
+        <DemoMarketSwitch compact className="max-w-full shrink-0 sm:max-w-[15rem]" />
+        <ReadOnlyNote />
+      </div>
+    </nav>
+  );
+}
+
+/** The read-only notice: a full sentence on a phone, a lock with the sentence on hover on a desktop. */
+function ReadOnlyNote() {
+  const { t } = useTranslation();
+  const text = t('demo_switcher.read_only', {
+    defaultValue: 'Read-only demo: many functions are limited. Use demo data only, uploads are off.',
+  });
+  return (
+    <span
+      title={text}
+      className="flex shrink-0 items-center gap-1 rounded-full text-xs text-content-tertiary lg:h-7 lg:w-7 lg:justify-center lg:border lg:border-border-light"
+    >
+      <Lock size={12} className="shrink-0" aria-hidden="true" />
+      <span className="lg:sr-only">{text}</span>
+    </span>
+  );
+}

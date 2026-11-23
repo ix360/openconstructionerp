@@ -1,0 +1,61 @@
+version: '3.8'
+
+# Production Docker Compose for Coolify / Self-Hosted Deployment
+# Automatically builds and deploys both the Web Frontend and Backend API
+# on port 8080 with persistent PostgreSQL and data storage.
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.unified
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      # Database connection parameters
+      OE_DB_HOST: postgres
+      OE_DB_PORT: "5432"
+      OE_DB_USER: ${POSTGRES_USER:-oe}
+      OE_DB_NAME: ${POSTGRES_DB:-openestimate}
+      OE_DB_PASSWORD: ${POSTGRES_PASSWORD:-change_me_to_a_secure_password}
+      # Security & JWT
+      JWT_SECRET: ${JWT_SECRET:-change_me_to_a_secure_jwt_secret_hex_32}
+      # Serving & Environment
+      SERVE_FRONTEND: "true"
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-*}"
+      OE_DATA_DIR: /data
+      APP_ENV: production
+      APP_DEBUG: "false"
+      VECTOR_BACKEND: lancedb
+    volumes:
+      - app_data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-oe}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_to_a_secure_password}
+      POSTGRES_DB: ${POSTGRES_DB:-openestimate}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-oe} -d $${POSTGRES_DB:-openestimate}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  pg_data:
+  app_data:

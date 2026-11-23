@@ -1,0 +1,289 @@
+// DDC-CWICR-OE: DataDrivenConstruction · OpenConstructionERP​‌‍⁠​‌‍⁠​‌‍⁠​‌‍⁠
+// Copyright (c) 2026 Artem Boiko / DataDrivenConstruction
+/**
+ * First screen after signing in to the public demo: pick the kind of company
+ * you want to see. Each card opens its showcase project with that company's
+ * look and a menu cut to its work.
+ */
+
+import type { CSSProperties } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router-dom';
+import { ArrowRight, Check, Globe, SlidersHorizontal, Sparkles } from 'lucide-react';
+import { ACCENT_SWATCH, FONT_STACK, type Accent } from '@/shared/lib/appearance';
+import { DEMO_PROFILES, type DemoProfile } from '@/shared/lib/demoProfiles';
+import { fmtNumber } from '@/shared/lib/formatters';
+import { demoSectionCount } from '@/shared/lib/useDemoModules';
+import { canonicalGroupId, navGroups } from '@/app/layout/navCatalog';
+import { DemoMarketSwitch, useDemoProjects } from '@/shared/ui/DemoSwitcherBar';
+import { HexMark, type HexBuildingKind } from '@/shared/ui/HexMark';
+import { companyThumbFor } from '@/features/cases/caseFaces';
+import { EmptyState } from '@/shared/ui';
+import { FeaturedArticle } from './FeaturedArticle';
+
+/**
+ * The picture in each card's hex: the site scene of the company type the demo
+ * plays (the same thumbs the Cases hub uses), and a building drawing when none.
+ */
+const DEMO_FACE: Record<string, { companyType: string; kind: HexBuildingKind }> = {
+  'full-showcase-riyadh': { companyType: 'full_enterprise', kind: 'hospital' },
+  'residential-berlin': { companyType: 'general_contractor', kind: 'residential' },
+  'office-london': { companyType: 'commercial-manager', kind: 'tower' },
+  'medical-us': { companyType: 'construction-manager', kind: 'hospital' },
+  'condo-toronto': { companyType: 'real_estate_developer', kind: 'tower' },
+  'school-paris': { companyType: 'government-agency', kind: 'residential' },
+  'office-shanghai': { companyType: 'estimator', kind: 'tower' },
+};
+
+export function demoFaceFor(slug: string): { src: string | null; kind: HexBuildingKind } {
+  const face = DEMO_FACE[slug];
+  if (!face) return { src: null, kind: 'warehouse' };
+  return { src: companyThumbFor(face.companyType), kind: face.kind };
+}
+
+/** The platform with every module on: first, two columns wide, beside the featured article. */
+const FEATURED_SLUG = 'full-showcase-riyadh';
+
+const FOOTER_LINK =
+  'inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-surface-primary px-3 text-sm font-medium text-content-primary transition-colors hover:bg-surface-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-oe-blue/60 focus-visible:ring-offset-2';
+
+/**
+ * Accent text on the card surface. The swatches are light-theme inks; on a dark
+ * card graphite or crimson sink below AA, so dark mode reads the same tints the
+ * app's dark accents use (index.css `--oe-blue-text`).
+ */
+const ACCENT_TEXT_DARK: Record<Accent, string> = {
+  blue: '#93c5fd',
+  teal: '#99f6e4',
+  violet: '#ddd6fe',
+  emerald: '#a7f3d0',
+  amber: '#fde68a',
+  graphite: '#e2e8f0',
+  crimson: '#fecdd3',
+};
+
+const ACCENT_TEXT = 'text-[color:var(--demo-ink)] dark:text-[color:var(--demo-ink-dark)]';
+
+/** Sections every demo keeps (overview, documents, communication): not worth a chip. */
+const BASE_GROUPS = new Set(['grp_overview', 'grp_documents', 'grp_communication']);
+const MAX_CHIPS = 5;
+
+function SectionChips({ profile }: { profile: DemoProfile }) {
+  const { t } = useTranslation();
+  if (!profile.groups) return null;
+  // An alias id names the group that holds its rows; list each once.
+  const own = [...new Set(profile.groups.map(canonicalGroupId))].filter((g) => !BASE_GROUPS.has(g));
+  const shown = own.slice(0, MAX_CHIPS);
+  const rest = own.length - shown.length;
+  return (
+    <ul className="mt-4 flex flex-wrap gap-1.5" data-testid={`demo-sections-${profile.slug}`}>
+      {shown.map((id) => {
+        const group = navGroups.find((g) => g.id === id);
+        if (!group) return null;
+        return (
+          <li
+            key={id}
+            className="rounded-full border border-border-light bg-surface-secondary px-2.5 py-0.5 text-xs font-medium text-content-secondary"
+          >
+            {t(group.labelKey, { defaultValue: group.defaultLabel ?? id })}
+          </li>
+        );
+      })}
+      {rest > 0 && (
+        <li className="px-1 py-0.5 text-xs font-medium text-content-tertiary">
+          {t('demo_chooser.more_sections', { defaultValue: '+{{n}} more', n: fmtNumber(rest, 0) })}
+        </li>
+      )}
+    </ul>
+  );
+}
+
+function DemoCard({ profile, featured = false }: { profile: DemoProfile; featured?: boolean }) {
+  const { t } = useTranslation();
+  const { bySlug, open } = useDemoProjects();
+  const accent = ACCENT_SWATCH[profile.appearance.accent];
+  const ink = { '--demo-ink': accent, '--demo-ink-dark': ACCENT_TEXT_DARK[profile.appearance.accent] } as CSSProperties;
+  const { shown: sections, total: allSections } = demoSectionCount(profile);
+  const list = [1, 2, 3].map((i) => t(`${profile.stem}.point_${i}`));
+  const face = demoFaceFor(profile.slug);
+  return (
+    <button
+      type="button"
+      onClick={() => open(profile.slug)}
+      data-testid={`demo-card-${profile.slug}`}
+      data-featured={featured || undefined}
+      className={`group relative flex h-full w-full min-w-0 flex-col rounded-xl border bg-surface-elevated text-start text-content-primary transition-shadow hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 motion-reduce:transition-none ${
+        featured ? 'border-2' : 'border-border-light'
+      }`}
+      style={{ ...ink, outlineColor: accent, ...(featured ? { borderColor: accent } : {}) }}
+    >
+      <HexMark src={face.src} kind={face.kind} accent={accent} size={featured ? 80 : 64} className="-top-4 -start-4" />
+      <div className="h-1.5 w-full rounded-t-xl" style={{ backgroundColor: accent }} />
+      <div className={`flex flex-1 flex-col p-5 ${featured ? 'lg:flex-row lg:gap-8' : ''}`}>
+        <div className="flex min-w-0 flex-1 flex-col">
+          {featured && (
+            <span
+              className="mb-2 ms-16 inline-flex w-fit items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold text-white"
+              style={{ backgroundColor: accent }}
+            >
+              <Sparkles size={14} />
+              {t('demo_chooser.featured_badge', { defaultValue: 'Full platform: every module' })}
+            </span>
+          )}
+          <p className={`ps-12 text-xs font-semibold uppercase tracking-wide ${ACCENT_TEXT}`}>
+            {t(`${profile.stem}.audience`)}
+          </p>
+          <h2
+            className="mt-1 ps-12 text-lg font-semibold text-content-primary"
+            style={{ fontFamily: FONT_STACK[profile.appearance.font] }}
+          >
+            {t(`${profile.stem}.title`)}
+          </h2>
+          <p className="mt-1 flex items-center gap-1.5 text-sm text-content-tertiary">
+            <Globe size={14} className="shrink-0" aria-hidden="true" />
+            <span className="font-medium text-content-secondary" data-testid={`demo-country-${profile.slug}`}>
+              {t(`${profile.stem}.country`)}
+            </span>
+            <span aria-hidden="true">·</span>
+            <span className="min-w-0 truncate">{bySlug.get(profile.slug)?.name}</span>
+          </p>
+          <p className="mt-1 text-xs font-medium text-content-tertiary" data-testid={`demo-standards-${profile.slug}`}>
+            {profile.standards}
+          </p>
+          <p className="mt-3 text-sm text-content-secondary">{t(`${profile.stem}.body`)}</p>
+        </div>
+        <div className={`flex flex-1 flex-col ${featured ? 'lg:justify-center' : ''}`}>
+          <ul className="mt-4 space-y-1.5 text-sm text-content-primary lg:mt-0">
+            {list.map((point) => (
+              <li key={point} className="flex gap-2">
+                <Check size={16} className={`mt-0.5 shrink-0 ${ACCENT_TEXT}`} />
+                <span>{point}</span>
+              </li>
+            ))}
+          </ul>
+          <SectionChips profile={profile} />
+          <div className="mt-auto flex items-center justify-between gap-3 pt-5">
+            <span className="text-xs text-content-tertiary">
+              {t('demo_chooser.sections', {
+                defaultValue: 'Menu: {{n}} of {{total}} sections',
+                n: fmtNumber(sections, 0),
+                total: fmtNumber(allSections, 0),
+              })}
+            </span>
+            <span
+              className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-white transition-[gap] group-hover:gap-2.5"
+              style={{ backgroundColor: accent }}
+            >
+              {t('demo_chooser.open', { defaultValue: 'Open this demo' })}
+              <ArrowRight size={16} className="rtl:rotate-180" />
+            </span>
+          </div>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+export function DemoChooserPage() {
+  const { t } = useTranslation();
+  const { bySlug, loaded } = useDemoProjects();
+  const installed = DEMO_PROFILES.filter((p) => bySlug.has(p.slug));
+  const featured = installed.find((p) => p.slug === FEATURED_SLUG);
+  const others = installed.filter((p) => p.slug !== FEATURED_SLUG);
+
+  return (
+    <div className="space-y-5 animate-fade-in">
+      <header className="text-center">
+        <h1 className="text-2xl font-semibold tracking-tight text-content-primary">
+          {t('demo_switcher.label', { defaultValue: 'Demo projects' })}
+        </h1>
+        <p className="mt-1 text-base font-medium text-content-primary">
+          {t('demo_chooser.title', { defaultValue: 'Which company do you want to see?' })}
+        </p>
+        <p className="mx-auto mt-2 max-w-2xl text-sm leading-relaxed text-content-secondary">
+          {t('demo_chooser.subtitle', {
+            defaultValue:
+              'Each demo is a real-sized project run by a different kind of company, with a menu cut to its work. Switch any time from the bar at the top.',
+          })}
+        </p>
+        {installed.length > 0 && (
+          <div className="mx-auto mt-4 flex max-w-xl flex-col items-center gap-1.5">
+            <DemoMarketSwitch className="w-full" />
+            <p className="text-xs text-content-tertiary">
+              {t('demo_market.hint', {
+                defaultValue:
+                  'Sets the interface language and opens the demo for that country, with its own data and standards.',
+              })}
+            </p>
+          </div>
+        )}
+      </header>
+
+      {loaded && installed.length === 0 && (
+        <EmptyState
+          icon={<Sparkles size={20} />}
+          title={t('demo_chooser.none', { defaultValue: 'No demo project is installed on this server yet.' })}
+        />
+      )}
+
+      {/* The full platform spans two variant columns; the article on the idea behind it fills the third. */}
+      <div className="grid grid-cols-1 gap-x-5 gap-y-8 pt-3 lg:grid-cols-3" data-testid="demo-chooser-lead">
+        {featured && (
+          <div className="min-w-0 lg:col-span-2">
+            <DemoCard profile={featured} featured />
+          </div>
+        )}
+        {/* Beside the full platform the article takes the card's height instead of setting it. */}
+        <div className={`min-w-0 ${featured ? 'lg:relative' : 'lg:col-start-3'}`}>
+          <div className={featured ? 'h-full lg:absolute lg:inset-0' : 'h-full'}>
+            <FeaturedArticle />
+          </div>
+        </div>
+      </div>
+
+      {others.length > 0 && (
+        <>
+          <h2 className="pt-2 text-center text-sm font-medium text-content-secondary">
+            {t('demo_chooser.variants_heading', {
+              defaultValue: 'Or start from a variant cut to one kind of company',
+            })}
+          </h2>
+          <div className="grid grid-cols-1 gap-x-5 gap-y-8 pt-3 sm:grid-cols-2 lg:grid-cols-3">
+            {others.map((profile) => (
+              <DemoCard key={profile.slug} profile={profile} />
+            ))}
+          </div>
+        </>
+      )}
+
+      <section
+        data-testid="demo-chooser-footer"
+        className="flex flex-col gap-4 rounded-xl border border-border-light bg-surface-secondary p-5 md:flex-row md:items-center md:justify-between"
+      >
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold text-content-primary">
+            {t('demo_chooser.footer_title', { defaultValue: 'Any package, for any country and any company' })}
+          </h2>
+          <p className="mt-1 max-w-3xl text-sm text-content-secondary">
+            {t('demo_chooser.footer_body', {
+              defaultValue:
+                'These demos are assembled from the same platform. Country packs add local standards, contracts and data; settings let you turn modules on or off and set your own look.',
+            })}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Link to="/packs" data-testid="demo-footer-packs" className={FOOTER_LINK}>
+            <Globe size={16} />
+            {t('demo_chooser.footer_packs', { defaultValue: 'Country packs' })}
+          </Link>
+          <Link to="/settings" data-testid="demo-footer-settings" className={FOOTER_LINK}>
+            <SlidersHorizontal size={16} />
+            {t('demo_chooser.footer_settings', { defaultValue: 'Modules and look in settings' })}
+          </Link>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export default DemoChooserPage;

@@ -1,0 +1,452 @@
+// DDC-CWICR-OE: DataDrivenConstruction · OpenConstructionERP​‌‍⁠​‌‍⁠​‌‍⁠​‌‍⁠
+// Copyright (c) 2026 Artem Boiko / DataDrivenConstruction
+/**
+ * KPI cards row for the Coordination Hub dashboard.
+ *
+ * Four glass-effect cards with per-metric color accents:
+ *  • Open Clashes — orange/red accent (alert)
+ *  • Cost Impact — amber accent (money)
+ *  • Rule Packs   — emerald accent (passing)
+ *  • Federations  — sky accent (structural)
+ *
+ * The colored accent lives as a 2 px gradient bar on top + a faint
+ * radial glow behind the icon, so it reads as "themed" without
+ * fighting the glass texture. Loading skeleton mirrors the same
+ * footprint so the page doesn't reflow when data lands.
+ */
+
+import {
+  Radar,
+  Coins,
+  ClipboardCheck,
+  Layers,
+  ArrowUpRight,
+  ArrowDownRight,
+  Minus,
+  Eye,
+  FileText,
+} from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import clsx from 'clsx';
+import { MoneyDisplay } from '@/shared/ui/MoneyDisplay';
+import { DateDisplay } from '@/shared/ui/DateDisplay';
+import { InfoHint } from '@/shared/ui';
+import type { CoordinationDashboard } from './types';
+import { getNumberLocale } from '@/stores/usePreferencesStore';
+
+export interface CoordinationKPICardsProps {
+  data: CoordinationDashboard | undefined;
+  isLoading?: boolean;
+  /** Active project id — used to scope the clash drill-down deep-link. */
+  projectId?: string | null;
+  /**
+   * Drill-down navigation. The big number people instinctively click takes
+   * them into the list that explains it (clashes / cost impact -> filtered
+   * clash list, rule packs -> /bim/rules, federations -> /bim/federations).
+   * Optional so the cards still render read-only where no navigation is wired.
+   */
+  onNavigate?: (to: string) => void;
+}
+
+type Accent = 'rose' | 'amber' | 'emerald' | 'sky';
+
+const ACCENT_STYLES: Record<
+  Accent,
+  { iconBg: string; iconText: string }
+> = {
+  rose: {
+    iconBg: 'bg-semantic-error-bg',
+    iconText: 'text-semantic-error',
+  },
+  amber: {
+    iconBg: 'bg-semantic-warning-bg',
+    iconText: 'text-semantic-warning',
+  },
+  emerald: {
+    iconBg: 'bg-semantic-success-bg',
+    iconText: 'text-semantic-success',
+  },
+  sky: {
+    iconBg: 'bg-semantic-info-bg',
+    iconText: 'text-semantic-info',
+  },
+};
+
+interface KPICardProps {
+  accent: Accent;
+  icon: React.ReactNode;
+  label: string;
+  primary: React.ReactNode;
+  delta?: { value: number; direction: 'up' | 'down' | 'flat'; label: string } | null;
+  secondary?: React.ReactNode;
+  /** Optional one-line caveat surfaced via an (i) tooltip next to the label. */
+  hint?: string;
+  testId?: string;
+  /**
+   * Optional drill-down. When set the whole card becomes a button: the big
+   * number people instinctively click navigates into the list that explains
+   * it. `onClickTitle` is the accessible action label (tooltip + aria-label).
+   */
+  onClick?: () => void;
+  onClickTitle?: string;
+}
+
+function KPICard({
+  accent,
+  icon,
+  label,
+  primary,
+  delta,
+  secondary,
+  hint,
+  testId,
+  onClick,
+  onClickTitle,
+}: KPICardProps) {
+  const styles = ACCENT_STYLES[accent];
+  const clickable = !!onClick;
+  return (
+    <div
+      data-testid={testId}
+      onClick={onClick}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      aria-label={clickable ? onClickTitle : undefined}
+      title={clickable ? onClickTitle : undefined}
+      className={clsx(
+        'group relative overflow-hidden rounded-xl',
+        'border border-border-light',
+        'bg-surface-elevated',
+        clickable &&
+          'cursor-pointer transition-colors hover:border-border-strong hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus',
+      )}
+    >
+      <div className="relative px-4 py-3">
+        <div className="flex items-start justify-between">
+          <div className="flex items-center gap-2">
+            <div
+              className={clsx(
+                'flex h-8 w-8 items-center justify-center rounded-lg',
+                styles.iconBg,
+                styles.iconText,
+              )}
+            >
+              {icon}
+            </div>
+            <span className="oe-overline inline-flex items-center gap-1">
+              {label}
+              {hint ? <InfoHint inline text={hint} /> : null}
+            </span>
+          </div>
+          {delta ? (
+            <span
+              data-testid={testId ? `${testId}-delta` : undefined}
+              className={clsx(
+                'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs font-semibold',
+                delta.direction === 'up' &&
+                  'bg-semantic-error-bg text-semantic-error',
+                delta.direction === 'down' &&
+                  'bg-semantic-success-bg text-semantic-success',
+                delta.direction === 'flat' &&
+                  'bg-surface-secondary text-content-secondary',
+              )}
+            >
+              {delta.direction === 'up' && <ArrowUpRight size={12} />}
+              {delta.direction === 'down' && <ArrowDownRight size={12} />}
+              {delta.direction === 'flat' && <Minus size={12} />}
+              {Math.abs(delta.value)}
+            </span>
+          ) : clickable ? (
+            <ArrowUpRight
+              aria-hidden
+              size={16}
+              className="text-content-tertiary opacity-0 transition-opacity group-hover:opacity-100"
+            />
+          ) : null}
+        </div>
+        <div className="mt-2 text-xl font-semibold text-content-primary">
+          {primary}
+        </div>
+        {secondary ? (
+          <div className="mt-1 text-xs text-content-tertiary">{secondary}</div>
+        ) : (
+          <div className="mt-1 h-4" />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SkeletonCard() {
+  return (
+    <div className="relative overflow-hidden rounded-xl border border-border-light bg-surface-elevated px-4 py-3">
+      <div className="flex items-center gap-2">
+        <div className="h-8 w-8 animate-pulse rounded-lg bg-surface-secondary" />
+        <div className="h-3 w-24 animate-pulse rounded bg-surface-secondary" />
+      </div>
+      <div className="mt-2 h-6 w-3/4 animate-pulse rounded bg-surface-secondary" />
+      <div className="mt-2 h-3 w-1/2 animate-pulse rounded bg-surface-secondary" />
+    </div>
+  );
+}
+
+interface StatTileProps {
+  icon: React.ReactNode;
+  label: string;
+  value: React.ReactNode;
+  footer?: React.ReactNode;
+  /** Optional caveat surfaced via an (i) tooltip next to the label. */
+  hint?: string;
+}
+
+/** Lightweight supporting stat — used for the BCF / smart-view strip below
+ *  the four headline KPI cards. Glass treatment matches the cards but with
+ *  less visual weight (no accent bar, smaller type). */
+function StatTile({ icon, label, value, footer, hint }: StatTileProps) {
+  return (
+    <div className="relative overflow-hidden rounded-xl border border-border-light bg-surface-elevated/90 px-4 py-3 shadow-xs transition-shadow duration-normal ease-oe hover:shadow-sm">
+      <div className="flex items-center gap-2 text-content-tertiary">
+        <span className="flex h-6 w-6 items-center justify-center rounded-md bg-surface-secondary text-content-secondary">
+          {icon}
+        </span>
+        <span className="oe-overline inline-flex items-center gap-1">
+          {label}
+          {hint ? <InfoHint inline text={hint} /> : null}
+        </span>
+      </div>
+      <div className="mt-1.5 text-base font-semibold text-content-primary">
+        {value}
+      </div>
+      {footer ? (
+        <div className="mt-0.5 text-xs text-content-tertiary">{footer}</div>
+      ) : null}
+    </div>
+  );
+}
+
+export function CoordinationKPICards({
+  data,
+  isLoading,
+  projectId,
+  onNavigate,
+}: CoordinationKPICardsProps) {
+  const { t } = useTranslation();
+  // Clashes / cost impact drill into the open-clash list, scoped to the
+  // active project. Rule packs and federations drill into their own pages.
+  const clashOpenTo = projectId
+    ? `/clash?project=${projectId}&status=open`
+    : '/clash?status=open';
+  const goClashOpen = onNavigate ? () => onNavigate(clashOpenTo) : undefined;
+  const goRules = onNavigate ? () => onNavigate('/bim/rules') : undefined;
+  const goFederations = onNavigate
+    ? () => onNavigate('/bim/federations')
+    : undefined;
+
+  if (isLoading || !data) {
+    return (
+      <div
+        data-testid="coordination-kpi-skeleton"
+        className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
+      >
+        <SkeletonCard />
+        <SkeletonCard />
+        <SkeletonCard />
+        <SkeletonCard />
+      </div>
+    );
+  }
+
+  const newCount = data.clashes.delta_since_last_run.new;
+  const resolvedCount = data.clashes.delta_since_last_run.resolved;
+
+  let clashDelta: KPICardProps['delta'] = null;
+  if (newCount > 0) {
+    clashDelta = {
+      value: newCount,
+      direction: 'up',
+      label: t('coordination.delta_since_last_run', {
+        defaultValue: 'since last run',
+      }),
+    };
+  } else if (resolvedCount > 0) {
+    clashDelta = {
+      value: resolvedCount,
+      direction: 'down',
+      label: t('coordination.delta_resolved', { defaultValue: 'resolved' }),
+    };
+  }
+
+  return (
+    <>
+    <div
+      data-testid="coordination-kpi-cards"
+      className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
+    >
+      <KPICard
+        accent="rose"
+        testId="kpi-open-clashes"
+        icon={<Radar size={20} />}
+        label={t('coordination.open_clashes', { defaultValue: 'Open Clashes' })}
+        primary={data.clashes.open_count.toLocaleString(getNumberLocale())}
+        delta={clashDelta}
+        onClick={goClashOpen}
+        onClickTitle={t('coordination.open_clashes_drill', {
+          defaultValue: 'View open clashes',
+        })}
+        secondary={
+          data.clashes.last_run_at ? (
+            <span className="inline-flex items-center gap-1">
+              {t('coordination.resolved_clashes', {
+                defaultValue: '{{n}} resolved',
+                n: data.clashes.resolved_count,
+              })}
+              {' · '}
+              {t('coordination_hub.last_run', { defaultValue: 'as of' })}{' '}
+              <DateDisplay value={data.clashes.last_run_at} format="relative" />
+            </span>
+          ) : (
+            t('coordination.resolved_clashes', {
+              defaultValue: '{{n}} resolved',
+              n: data.clashes.resolved_count,
+            })
+          )
+        }
+      />
+      <KPICard
+        accent="amber"
+        testId="kpi-cost-impact"
+        icon={<Coins size={20} />}
+        label={t('coordination.cost_impact_open', {
+          defaultValue: 'Open Cost Impact',
+        })}
+        onClick={goClashOpen}
+        onClickTitle={t('coordination.cost_impact_drill', {
+          defaultValue: 'View the open clashes behind this cost',
+        })}
+        primary={
+          <MoneyDisplay
+            amount={data.open_cost_impact_total}
+            currency={data.currency}
+            compact
+          />
+        }
+        secondary={t('coordination_hub.cost_across_clashes', {
+          defaultValue: 'Across {{n}} open clash(es)',
+          n: data.clashes.open_count,
+        })}
+      />
+      <KPICard
+        accent="emerald"
+        testId="kpi-rule-pack"
+        icon={<ClipboardCheck size={20} />}
+        label={t('coordination.rule_pack_status', { defaultValue: 'Rule Packs' })}
+        primary={data.rule_packs.installed_count.toLocaleString(getNumberLocale())}
+        onClick={goRules}
+        onClickTitle={t('coordination.rule_pack_drill', {
+          defaultValue: 'Open BIM rule packs',
+        })}
+        secondary={t('coordination_hub.rules_active_disabled', {
+          defaultValue: '{{p}} active · {{f}} disabled',
+          p: data.rule_packs.last_check_pass_count,
+          f: data.rule_packs.last_check_fail_count,
+        })}
+        hint={t('coordination_hub.rules_hint', {
+          defaultValue:
+            'These are configuration states (rules switched on vs off), not the result of a model evaluation run.',
+        })}
+      />
+      <KPICard
+        accent="sky"
+        testId="kpi-federations"
+        icon={<Layers size={20} />}
+        label={t('coordination.federations_count', { defaultValue: 'Federations' })}
+        primary={data.federations.count.toLocaleString(getNumberLocale())}
+        onClick={goFederations}
+        onClickTitle={t('coordination.federations_drill', {
+          defaultValue: 'Open BIM federations',
+        })}
+        secondary={t('coordination.federations_members', {
+          defaultValue: '{{m}} members · {{e}} elements',
+          m: data.federations.total_members,
+          e: data.federations.total_elements,
+        })}
+      />
+    </div>
+
+    {/* Secondary stat strip — surfaces the BCF-activity + smart-view
+        figures the dashboard payload already carries (and the page
+        subtitle advertises) but that the four KPI cards above never
+        render. Lighter chrome than a full KPI card so it reads as
+        supporting context, not a fifth headline metric. */}
+    <div
+      data-testid="coordination-stat-strip"
+      className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"
+    >
+      <StatTile
+        icon={<FileText size={16} />}
+        label={t('coordination_hub.bcf_activity', {
+          defaultValue: 'BCF activity (30d)',
+        })}
+        value={t('coordination_hub.bcf_io', {
+          defaultValue: '{{out}} exported · {{in}} imported',
+          out: data.bcf_activity.topics_exported_30d,
+          in: data.bcf_activity.topics_imported_30d,
+        })}
+        footer={
+          data.bcf_activity.last_export_at ? (
+            <>
+              {t('coordination_hub.bcf_last', { defaultValue: 'Last activity' })}{' '}
+              <DateDisplay
+                value={data.bcf_activity.last_export_at}
+                format="relative"
+              />
+            </>
+          ) : (
+            t('coordination_hub.bcf_none', {
+              defaultValue: 'No BCF topics in the last 30 days',
+            })
+          )
+        }
+        hint={t('coordination_hub.bcf_hint', {
+          defaultValue:
+            'Coarse activity signal. Import vs export is approximated from topic authoring metadata, not a dedicated direction flag.',
+        })}
+      />
+      <StatTile
+        icon={<Eye size={16} />}
+        label={t('coordination_hub.smart_views_project', {
+          defaultValue: 'Project smart views',
+        })}
+        value={data.smart_views.project_count.toLocaleString(getNumberLocale())}
+        footer={t('coordination_hub.smart_views_project_footer', {
+          defaultValue: 'Saved views scoped to this project',
+        })}
+      />
+      <StatTile
+        icon={<Eye size={16} />}
+        label={t('coordination_hub.smart_views_personal', {
+          defaultValue: 'Personal smart views',
+        })}
+        value={data.smart_views.user_count.toLocaleString(getNumberLocale())}
+        footer={t('coordination_hub.smart_views_personal_footer', {
+          defaultValue: 'Across all projects',
+        })}
+        hint={t('coordination_hub.smart_views_personal_hint', {
+          defaultValue:
+            'Personal (user-scoped) views are not tied to a project, so this is a global count across every project you can access, not a per-project figure.',
+        })}
+      />
+    </div>
+    </>
+  );
+}

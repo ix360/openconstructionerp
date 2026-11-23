@@ -1,0 +1,717 @@
+// DDC-CWICR-OE: DataDrivenConstruction · OpenConstructionERP​‌‍⁠​‌‍⁠​‌‍⁠​‌‍⁠
+// Copyright (c) 2026 Artem Boiko / DataDrivenConstruction
+/**
+ * Public price-entry page for an invited subcontractor (`/tendering/bid/:token`).
+ *
+ * The bidder has no account and no operator to ask, so the page has to read
+ * in one pass: what is being tendered and until when, the bill with a price
+ * field per line, the running sum in the package currency, a draft button and
+ * a submit button that asks once more. After submitting, the same page is a
+ * read-only receipt.
+ *
+ * Nothing on the page comes from the buyer's own pricing: the API hands over
+ * text, units and quantities only.
+ */
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import { ChevronDown, ChevronRight, CheckCircle2, Clock, Copy, Lock, AlertTriangle } from 'lucide-react';
+
+import { SUPPORTED_LANGUAGES } from '@/app/i18n';
+import { sortLanguagesByName } from '@/shared/lib/languageOrder';
+import { Button, ConfirmDialog } from '@/shared/ui';
+import { useConfirm } from '@/shared/hooks/useConfirm';
+import { formatCurrency } from '@/shared/lib/money';
+import { fmtList, formatDateValue } from '@/shared/lib/formatters';
+import { localizedUnitCode } from '@/shared/lib/unitLabels';
+import { parseMoneyInput, toDecimalPayloadString } from '@/shared/lib/parseDecimal';
+import { copyToClipboard } from '@/shared/lib/browser';
+import { useNumberLocale } from '@/stores/usePreferencesStore';
+
+import {
+  BidPortalError,
+  bidPortalLogoUrl,
+  fetchBidPortal,
+  saveBidDraft,
+  submitBid,
+  type BidPortalErrorCode,
+  type BidPricingMode,
+  type BidPortalLine,
+  type BidPortalView,
+} from './api';
+import { TenderInfoSection } from './TenderInfoSection';
+import { BidExchangeSection } from './BidExchangeSection';
+
+type PageState =
+  | { kind: 'loading' }
+  | { kind: 'error'; code: BidPortalErrorCode }
+  | { kind: 'ready'; view: BidPortalView };
+
+/** One typed price: empty, a usable number, or something we cannot accept. */
+interface ParsedPrice {
+  raw: string;
+  value: number | null;
+  invalid: boolean;
+}
+
+function parsePrice(raw: string): ParsedPrice {
+  const text = raw.trim();
+  if (!text) return { raw, value: null, invalid: false };
+  const value = parseMoneyInput(text);
+  if (value === null || value < 0) return { raw, value: null, invalid: true };
+  return { raw, value, invalid: false };
+}
+
+function quantityOf(line: BidPortalLine): number {
+  const n = Number(line.quantity);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function BidPortalPage() {
+  const { token = '' } = useParams<{ token: string }>();
+  const { t, i18n } = useTranslation();
+  const numberLocale = useNumberLocale();
+  const { confirm, ...confirmProps } = useConfirm();
+
+  const [state, setState] = useState<PageState>({ kind: 'loading' });
+  const [inputs, setInputs] = useState<Record<string, string>>({});
+  const [notes, setNotes] = useState('');
+  const [pricingMode, setPricingMode] = useState<BidPricingMode>('unit_price');
+  const [lumpSum, setLumpSum] = useState('');
+  const [dirty, setDirty] = useState(false);
+  const [busy, setBusy] = useState<'save' | 'submit' | null>(null);
+  const [actionError, setActionError] = useState<BidPortalErrorCode | null>(null);
+  const [serverLineErrors, setServerLineErrors] = useState<Record<string, string>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  const adopt = useCallback((view: BidPortalView) => {
+    setState({ kind: 'ready', view });
+    setInputs({ ...view.draft.unit_prices });
+    setNotes(view.draft.notes || '');
+    setPricingMode(view.draft.pricing_mode === 'lump_sum' ? 'lump_sum' : 'unit_price');
+    setLumpSum(view.draft.lump_sum ?? '');
+    setDirty(false);
+    setServerLineErrors({});
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!token) {
+      setState({ kind: 'error', code: 'not_found' });
+      return;
+    }
+    fetchBidPortal(token)
+      .then((view) => {
+        if (!cancelled) adopt(view);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setState({ kind: 'error', code: err instanceof BidPortalError ? err.code : 'unknown' });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, adopt]);
+
+  // A bidder who typed prices and closes the tab should be asked first.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+
+  const view = state.kind === 'ready' ? state.view : null;
+  const readOnly = !view || view.state !== 'open';
+  const currency = view?.currency ?? '';
+
+  const items = useMemo(() => (view ? view.lines.filter((l) => l.kind === 'item') : []), [view]);
+  const parsed = useMemo(() => {
+    const out: Record<string, ParsedPrice> = {};
+    for (const line of items) out[line.id] = parsePrice(inputs[line.id] ?? '');
+    return out;
+  }, [items, inputs]);
+
+  const pricedCount = items.filter((l) => parsed[l.id]?.value !== null && parsed[l.id]?.value !== undefined).length;
+  const invalidCount = items.filter((l) => parsed[l.id]?.invalid).length;
+  const unpricedCount = items.length - pricedCount - invalidCount;
+  const linesSum = items.reduce((acc, l) => acc + (parsed[l.id]?.value ?? 0) * quantityOf(l), 0);
+  const parsedLump = parsePrice(lumpSum);
+  const isLump = pricingMode === 'lump_sum';
+  const lumpReady = isLump && parsedLump.value !== null && !parsedLump.invalid;
+  const sum = isLump ? (parsedLump.value ?? 0) : linesSum;
+
+  // A field the bidder edits keeps the canonical form they typed or the
+  // server stored; once the bid is in and the field is only read, the price
+  // is written the reader's way (52,50 rather than 52.50).
+  const priceFormat = useMemo(
+    () => new Intl.NumberFormat(numberLocale, { minimumFractionDigits: 2, maximumFractionDigits: 4 }),
+    [numberLocale],
+  );
+  const qtyFormat = useMemo(
+    () => new Intl.NumberFormat(numberLocale, { maximumFractionDigits: 3 }),
+    [numberLocale],
+  );
+  const money = (value: number | string) => formatCurrency(value, currency, numberLocale);
+
+  const body = () => {
+    const unit_prices: Record<string, string> = {};
+    for (const line of items) {
+      const raw = (inputs[line.id] ?? '').trim();
+      if (raw) unit_prices[line.id] = toDecimalPayloadString(raw, '');
+    }
+    const lump = lumpSum.trim();
+    return {
+      unit_prices,
+      notes,
+      currency,
+      pricing_mode: pricingMode,
+      lump_sum: isLump && lump ? toDecimalPayloadString(lump, '') : null,
+    };
+  };
+
+  const handleFailure = (err: unknown) => {
+    if (err instanceof BidPortalError) {
+      if (['not_found', 'revoked', 'expired'].includes(err.code)) {
+        setState({ kind: 'error', code: err.code });
+        return;
+      }
+      setActionError(err.code);
+      setServerLineErrors(Object.fromEntries(err.lineErrors.map((e) => [e.line_id, e.reason])));
+      return;
+    }
+    setActionError('unknown');
+  };
+
+  const onSave = async () => {
+    setBusy('save');
+    setActionError(null);
+    try {
+      adopt(await saveBidDraft(token, body()));
+    } catch (err) {
+      handleFailure(err);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onSubmit = async () => {
+    const ok = await confirm({
+      title: t('bid_portal.confirm.title', { defaultValue: 'Submit your bid?' }),
+      message:
+        t('bid_portal.confirm.sum', { defaultValue: 'Bid sum: {{amount}}.', amount: money(sum) }) +
+        ' ' +
+        (unpricedCount > 0
+          ? t('bid_portal.confirm.unpriced', {
+              defaultValue_one: '{{count}} line has no price and will be treated as not offered.',
+              defaultValue_other: '{{count}} lines have no price and will be treated as not offered.',
+              count: unpricedCount,
+            }) + ' '
+          : '') +
+        t('bid_portal.confirm.final', {
+          defaultValue: 'After submitting you can no longer change your prices.',
+        }),
+      confirmLabel: t('bid_portal.submit', { defaultValue: 'Submit bid' }),
+      variant: 'warning',
+    });
+    if (!ok) return;
+    setBusy('submit');
+    setActionError(null);
+    try {
+      adopt(await submitBid(token, body()));
+    } catch (err) {
+      handleFailure(err);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (state.kind === 'loading') {
+    return (
+      <Shell>
+        <p className="py-16 text-center text-sm text-content-tertiary" data-testid="bid-portal-loading">
+          {t('bid_portal.loading', { defaultValue: 'Loading the bill...' })}
+        </p>
+      </Shell>
+    );
+  }
+
+  if (state.kind === 'error') {
+    return (
+      <Shell>
+        <LinkProblem code={state.code} />
+      </Shell>
+    );
+  }
+
+  const v = state.view;
+  const deadlineText = v.deadline ? formatDateValue(v.deadline, { dateStyle: 'medium' }) : '';
+
+  return (
+    <Shell logoUrl={v.buyer_logo ? bidPortalLogoUrl(token) : undefined} buyerName={v.buyer_name}>
+      <section className="space-y-1">
+        {(v.buyer_name || v.project_name) && (
+          <p className="flex flex-wrap gap-x-3 text-xs uppercase tracking-wide text-content-tertiary">
+            {v.buyer_name && <span>{v.buyer_name}</span>}
+            {v.project_name && <span>{v.project_name}</span>}
+          </p>
+        )}
+        <h1 className="text-xl font-semibold text-content-primary" data-testid="bid-portal-title">
+          {v.package_name}
+        </h1>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-content-secondary">
+          <span>
+            {t('bid_portal.for_company', { defaultValue: 'Bid of {{company}}', company: v.bidder_company })}
+          </span>
+          {deadlineText && (
+            <span className="inline-flex items-center gap-1">
+              <Clock size={14} aria-hidden />
+              {t('bid_portal.deadline', { defaultValue: 'Deadline: {{date}}', date: deadlineText })}
+            </span>
+          )}
+          {currency && (
+            <span>{t('bid_portal.currency', { defaultValue: 'Prices in {{currency}}', currency })}</span>
+          )}
+        </div>
+        {v.package_description && (
+          <p className="pt-2 text-sm text-content-secondary whitespace-pre-line">{v.package_description}</p>
+        )}
+      </section>
+
+      <TenderInfoSection token={token} />
+
+      <BidExchangeSection token={token} view={v} onView={adopt} />
+
+      {v.state === 'submitted' && (
+        <div
+          className="mt-4 flex items-start gap-3 rounded-lg border border-semantic-success/40 bg-semantic-success-bg p-4"
+          data-testid="bid-portal-receipt"
+          role="status"
+        >
+          <CheckCircle2 className="mt-0.5 shrink-0 text-semantic-success" size={20} aria-hidden />
+          <div className="text-sm text-content-primary">
+            <p className="font-medium">
+              {t('bid_portal.receipt.title', { defaultValue: 'Your bid has been submitted.' })}
+            </p>
+            {v.sealed && v.receipt_sha256 ? (
+              <div className="space-y-1 text-content-secondary" data-testid="bid-portal-sealed-receipt">
+                <p>
+                  {t('tendering.sealed.receipt_received', {
+                    defaultValue: 'Received {{date}}',
+                    date: v.received_at ? formatDateValue(v.received_at, { dateStyle: 'medium', timeStyle: 'medium' }) : '',
+                  })}
+                </p>
+                <p className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">{t('tendering.sealed.col_hash', { defaultValue: 'SHA-256' })}</span>
+                  <code className="break-all font-mono text-xs">{v.receipt_sha256}</code>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 rounded-lg border border-border-light px-2 py-0.5 text-xs hover:bg-surface-secondary"
+                    onClick={() => void copyToClipboard(v.receipt_sha256 ?? '')}
+                  >
+                    <Copy size={12} aria-hidden />
+                    {t('tendering.sealed.copy', { defaultValue: 'Copy' })}
+                  </button>
+                </p>
+                <p>{t('tendering.sealed.receipt_sealed_note', { defaultValue: 'Your prices are sealed and will be read only at the opening.' })}</p>
+                <p className="font-medium text-content-primary">
+                  {t('tendering.sealed.receipt_keep', { defaultValue: 'Keep this receipt. The code proves what you submitted and when.' })}
+                </p>
+              </div>
+            ) : (
+            <p className="text-content-secondary">
+              {t('bid_portal.receipt.detail', {
+                defaultValue: 'Submitted {{date}}. Bid sum: {{amount}}. The prices below can no longer be changed.',
+                date: v.submitted_at ? formatDateValue(v.submitted_at, { dateStyle: 'medium', timeStyle: 'short' }) : '',
+                amount: money(v.bid_amount ?? sum),
+              })}
+            </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {v.state === 'closed' && (
+        <div className="mt-4 flex items-start gap-3 rounded-lg border border-border-light bg-surface-secondary p-4" role="status">
+          <Lock className="mt-0.5 shrink-0 text-content-tertiary" size={20} aria-hidden />
+          <p className="text-sm text-content-secondary">
+            {t('bid_portal.closed', {
+              defaultValue: 'This tender is closed. Prices can no longer be entered.',
+            })}
+          </p>
+        </div>
+      )}
+
+      {!readOnly && (
+        <p className="mt-4 text-sm text-content-secondary">
+          {t('bid_portal.instructions', {
+            defaultValue:
+              'Enter a unit price for each line. The line sum and the bid sum update as you type. Save a draft at any time; submit once you are done.',
+          })}
+        </p>
+      )}
+
+      <div className="mt-4 overflow-x-auto rounded-lg border border-border-light bg-surface-primary">
+        <table className="oe-table w-full min-w-[720px]" data-testid="bid-portal-table">
+          <thead className="text-left">
+            <tr>
+              <th scope="col" className="w-24">
+                {t('bid_portal.col.ordinal', { defaultValue: 'Item no.' })}
+              </th>
+              <th scope="col">
+                {t('bid_portal.col.description', { defaultValue: 'Description' })}
+              </th>
+              <th scope="col" className="w-16">
+                {t('bid_portal.col.unit', { defaultValue: 'Unit' })}
+              </th>
+              <th scope="col" className="w-24 text-right">
+                {t('bid_portal.col.quantity', { defaultValue: 'Quantity' })}
+              </th>
+              <th scope="col" className="w-36 text-right">
+                {t('bid_portal.col.unit_price', { defaultValue: 'Unit price' })}
+              </th>
+              <th scope="col" className="w-32 text-right">
+                {t('bid_portal.col.line_sum', { defaultValue: 'Line sum' })}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {v.lines.map((line) => {
+              if (line.kind === 'section') {
+                return (
+                  <tr key={line.id}>
+                    <td className="font-mono text-content-secondary">{line.ordinal}</td>
+                    <td colSpan={5} className="font-semibold">
+                      {line.short_text}
+                    </td>
+                  </tr>
+                );
+              }
+              const p = parsed[line.id];
+              const lineSum = p?.value !== null && p?.value !== undefined ? p.value * quantityOf(line) : null;
+              const serverReason = serverLineErrors[line.id];
+              const isOpen = !!expanded[line.id];
+              const inputId = `bid-price-${line.id}`;
+              return (
+                <tr key={line.id} className="align-top">
+                  <td className="font-mono text-content-secondary">{line.ordinal}</td>
+                  <td>
+                    <label htmlFor={inputId} className="block">
+                      {line.short_text}
+                    </label>
+                    {(line.supplied_by_others?.length ?? 0) > 0 && (
+                      <p className="mt-0.5 text-xs text-content-tertiary" data-testid={`bid-portal-supplied-${line.id}`}>
+                        {t('bid_portal.supplied_by_others', {
+                          defaultValue: 'Supplied by others, not to be priced: {{items}}',
+                          items: fmtList(line.supplied_by_others ?? []),
+                        })}
+                      </p>
+                    )}
+                    {line.long_text && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setExpanded((s) => ({ ...s, [line.id]: !isOpen }))}
+                          className="mt-1 inline-flex items-center gap-1 text-xs text-oe-blue hover:underline"
+                          aria-expanded={isOpen}
+                        >
+                          {isOpen ? <ChevronDown size={12} aria-hidden /> : <ChevronRight size={12} aria-hidden />}
+                          {isOpen
+                            ? t('bid_portal.hide_long_text', { defaultValue: 'Hide full text' })
+                            : t('bid_portal.show_long_text', { defaultValue: 'Show full text' })}
+                        </button>
+                        {isOpen && (
+                          <p className="mt-1 whitespace-pre-line text-xs text-content-secondary">{line.long_text}</p>
+                        )}
+                      </>
+                    )}
+                  </td>
+                  <td className="text-content-secondary">{localizedUnitCode(line.unit, i18n.language)}</td>
+                  <td className="text-right tabular-nums text-content-secondary">
+                    {qtyFormat.format(quantityOf(line))}
+                  </td>
+                  <td className="text-right">
+                    <input
+                      id={inputId}
+                      type="text"
+                      inputMode="decimal"
+                      autoComplete="off"
+                      value={
+                        readOnly && p?.value !== null && p?.value !== undefined
+                          ? priceFormat.format(p.value)
+                          : (inputs[line.id] ?? '')
+                      }
+                      disabled={readOnly}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setInputs((s) => ({ ...s, [line.id]: next }));
+                        setDirty(true);
+                      }}
+                      aria-invalid={p?.invalid || !!serverReason}
+                      data-testid={`bid-price-input-${line.ordinal}`}
+                      className={
+                        'min-h-11 w-full rounded-lg border px-2 text-right tabular-nums bg-surface-primary ' +
+                        'focus:outline-none focus:ring-2 focus:ring-oe-blue disabled:bg-surface-secondary ' +
+                        (p?.invalid || serverReason ? 'border-semantic-error' : 'border-border-light')
+                      }
+                    />
+                    {(p?.invalid || serverReason) && (
+                      <span className="mt-0.5 block text-2xs text-semantic-error">
+                        {t('bid_portal.invalid_price', { defaultValue: 'Enter a number of 0 or more' })}
+                      </span>
+                    )}
+                  </td>
+                  <td className="text-right tabular-nums">
+                    {lineSum === null ? (
+                      <span className="text-content-quaternary">{t('bid_portal.not_priced', { defaultValue: 'not priced' })}</span>
+                    ) : (
+                      money(lineSum)
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <fieldset className="mt-4 rounded-lg border border-border-light p-3" data-testid="bid-portal-pricing-mode">
+        <legend className="px-1 text-sm font-medium text-content-primary">
+          {t('bid_portal.pricing_mode', { defaultValue: 'How do you price this offer?' })}
+        </legend>
+        <div className="flex flex-wrap gap-4">
+          {(['unit_price', 'lump_sum'] as const).map((mode) => (
+            <label key={mode} className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="bid-portal-pricing-mode"
+                value={mode}
+                checked={pricingMode === mode}
+                disabled={readOnly}
+                onChange={() => {
+                  setPricingMode(mode);
+                  setDirty(true);
+                }}
+              />
+              {mode === 'unit_price'
+                ? t('bid_portal.mode_unit_price', { defaultValue: 'Unit prices: the bid is the sum of the priced lines' })
+                : t('bid_portal.mode_lump_sum', { defaultValue: 'Lump sum: one price for the whole package' })}
+            </label>
+          ))}
+        </div>
+        {isLump && (
+          <div className="mt-3">
+            <label htmlFor="bid-portal-lump-sum" className="oe-label">
+              {t('bid_portal.lump_sum', { defaultValue: 'Lump sum ({{currency}})', currency })}
+            </label>
+            <input
+              id="bid-portal-lump-sum"
+              inputMode="decimal"
+              value={lumpSum}
+              disabled={readOnly}
+              onChange={(e) => {
+                setLumpSum(e.target.value);
+                setDirty(true);
+              }}
+              aria-invalid={parsedLump.invalid || undefined}
+              className="oe-input mt-1 w-48 text-right tabular-nums"
+              data-testid="bid-portal-lump-sum"
+            />
+            <p className="mt-1 text-xs text-content-tertiary">
+              {t('bid_portal.lump_sum_hint', {
+                defaultValue: 'Unit prices you enter above stay as the breakdown of the lump sum. Lines sum: {{amount}}',
+                amount: money(linesSum),
+              })}
+            </p>
+          </div>
+        )}
+      </fieldset>
+
+      <div className="mt-4">
+        <label htmlFor="bid-portal-notes" className="oe-label">
+          {t('bid_portal.notes', { defaultValue: 'Notes for the buyer (optional)' })}
+        </label>
+        <textarea
+          id="bid-portal-notes"
+          value={notes}
+          disabled={readOnly}
+          maxLength={2000}
+          rows={3}
+          onChange={(e) => {
+            setNotes(e.target.value);
+            setDirty(true);
+          }}
+          className="oe-textarea mt-1 w-full"
+        />
+      </div>
+
+      <div className="sticky bottom-0 mt-6 -mx-4 border-t border-border-light bg-surface-primary/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="mr-auto">
+            <p className="text-xs text-content-tertiary" data-testid="bid-portal-progress">
+              {t('bid_portal.progress', {
+                defaultValue: '{{priced}} of {{total}} lines priced',
+                priced: pricedCount,
+                total: items.length,
+              })}
+            </p>
+            <p className="text-lg font-semibold tabular-nums text-content-primary" data-testid="bid-portal-sum">
+              {money(sum)}
+            </p>
+          </div>
+          {actionError && (
+            <p className="flex items-center gap-1 text-sm text-semantic-error" role="alert" data-testid="bid-portal-action-error">
+              <AlertTriangle size={14} aria-hidden />
+              <ActionErrorText code={actionError} />
+            </p>
+          )}
+          {!readOnly && (
+            <>
+              <Button
+                variant="secondary"
+                onClick={onSave}
+                loading={busy === 'save'}
+                disabled={busy !== null || invalidCount > 0}
+                data-testid="bid-portal-save"
+              >
+                {t('bid_portal.save_draft', { defaultValue: 'Save draft' })}
+              </Button>
+              <Button
+                variant="primary"
+                onClick={onSubmit}
+                loading={busy === 'submit'}
+                disabled={busy !== null || (isLump ? !lumpReady : pricedCount === 0) || invalidCount > 0}
+                data-testid="bid-portal-submit"
+              >
+                {t('bid_portal.submit', { defaultValue: 'Submit bid' })}
+              </Button>
+            </>
+          )}
+        </div>
+        {!readOnly && v.draft.saved_at && !dirty && (
+          <p className="mt-1 text-2xs text-content-tertiary">
+            {t('bid_portal.draft_saved', {
+              defaultValue: 'Draft saved {{date}}',
+              date: formatDateValue(v.draft.saved_at, { dateStyle: 'medium', timeStyle: 'short' }),
+            })}
+          </p>
+        )}
+      </div>
+
+      <ConfirmDialog {...confirmProps} />
+    </Shell>
+  );
+}
+
+function ActionErrorText({ code }: { code: BidPortalErrorCode }) {
+  const { t } = useTranslation();
+  switch (code) {
+    case 'invalid_prices':
+      return <>{t('bid_portal.error.invalid_prices', { defaultValue: 'Some prices could not be accepted. Check the marked lines.' })}</>;
+    case 'nothing_priced':
+      return <>{t('bid_portal.error.nothing_priced', { defaultValue: 'Enter at least one price before submitting.' })}</>;
+    case 'lump_sum_required':
+    case 'lump_sum_invalid':
+      return <>{t('bid_portal.error.lump_sum', { defaultValue: 'Enter the lump sum as a number of 0 or more.' })}</>;
+    case 'already_submitted':
+      return <>{t('bid_portal.error.already_submitted', { defaultValue: 'This bid was already submitted.' })}</>;
+    case 'closed':
+      return <>{t('bid_portal.error.closed', { defaultValue: 'The tender is closed.' })}</>;
+    case 'currency_mismatch':
+      return <>{t('bid_portal.error.currency', { defaultValue: 'The currency of the tender has changed. Reload the page.' })}</>;
+    case 'rate_limited':
+      return <>{t('bid_portal.error.rate_limited', { defaultValue: 'Too many requests. Wait a minute and try again.' })}</>;
+    default:
+      return <>{t('bid_portal.error.unknown', { defaultValue: 'Something went wrong. Your entries are still on this page; try again.' })}</>;
+  }
+}
+
+function LinkProblem({ code }: { code: BidPortalErrorCode }) {
+  const { t } = useTranslation();
+  const title =
+    code === 'expired'
+      ? t('bid_portal.link.expired_title', { defaultValue: 'This link has expired' })
+      : code === 'revoked'
+        ? t('bid_portal.link.revoked_title', { defaultValue: 'This link is no longer valid' })
+        : code === 'not_found'
+          ? t('bid_portal.link.not_found_title', { defaultValue: 'This link does not work' })
+          : t('bid_portal.link.error_title', { defaultValue: 'The bill could not be loaded' });
+  const detail =
+    code === 'expired'
+      ? t('bid_portal.link.expired_detail', {
+          defaultValue: 'The deadline for this tender has passed. Contact the company that invited you if you still want to bid.',
+        })
+      : code === 'revoked'
+        ? t('bid_portal.link.revoked_detail', {
+            defaultValue: 'The company that invited you replaced or withdrew this link. Use the newest invitation email, or ask them for a new link.',
+          })
+        : code === 'not_found'
+          ? t('bid_portal.link.not_found_detail', {
+              defaultValue: 'Check that the whole link from the invitation email was copied, or ask the company that invited you for a new one.',
+            })
+          : t('bid_portal.link.error_detail', { defaultValue: 'Try again in a moment.' });
+  return (
+    <div className="mx-auto max-w-lg py-16 text-center" data-testid={`bid-portal-link-${code}`} role="alert">
+      <AlertTriangle className="mx-auto text-content-tertiary" size={32} aria-hidden />
+      <h1 className="mt-3 text-lg font-semibold text-content-primary">{title}</h1>
+      <p className="mt-2 text-sm text-content-secondary">{detail}</p>
+    </div>
+  );
+}
+
+function Shell({
+  children,
+  logoUrl,
+  buyerName,
+}: {
+  children: React.ReactNode;
+  logoUrl?: string;
+  buyerName?: string;
+}) {
+  const { t, i18n } = useTranslation();
+  const [logoFailed, setLogoFailed] = useState(false);
+  const currentLang =
+    SUPPORTED_LANGUAGES.find((l) => i18n.language === l.code)?.code ??
+    SUPPORTED_LANGUAGES.find((l) => i18n.language.startsWith(l.code))?.code ??
+    'en';
+  return (
+    <div className="min-h-screen bg-surface-secondary">
+      <header className="w-full border-b border-border-light bg-surface-primary">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
+          <span className="flex items-center gap-3 text-sm font-medium text-content-primary">
+            {logoUrl && !logoFailed && (
+              <img
+                src={logoUrl}
+                alt={buyerName || t('bid_portal.logo_alt', { defaultValue: 'Company logo' })}
+                className="h-10 max-w-[180px] object-contain"
+                onError={() => setLogoFailed(true)}
+                data-testid="bid-portal-logo"
+              />
+            )}
+            {t('bid_portal.brand', { defaultValue: 'Price entry' })}
+          </span>
+          <label className="flex items-center gap-2 text-xs text-content-secondary">
+            <span className="sr-only">{t('bid_portal.language', { defaultValue: 'Language' })}</span>
+            <select
+              value={currentLang}
+              onChange={(e) => void i18n.changeLanguage(e.target.value)}
+              className="oe-select-sm min-h-11"
+              data-testid="bid-portal-locale"
+            >
+              {sortLanguagesByName(SUPPORTED_LANGUAGES).map((loc) => (
+                <option key={loc.code} value={loc.code}>
+                  {loc.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </header>
+      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">{children}</main>
+    </div>
+  );
+}

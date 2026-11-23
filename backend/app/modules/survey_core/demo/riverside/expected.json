@@ -1,0 +1,409 @@
+{
+  "dataset": "riverside_yard",
+  "project_name": "Riverside Yard (survey demo)",
+  "crs": {
+    "epsg": 32633,
+    "name": "WGS 84 / UTM zone 33N",
+    "chip": "EPSG 32633"
+  },
+  "offsets": {
+    "e": 389000.0,
+    "n": 5819000.0
+  },
+  "demo_profiles_label": "Demo values, not a standard",
+  "survey_register": {
+    "lesson_1": {
+      "search": "32633",
+      "chip": "EPSG 32633"
+    },
+    "lesson_2": {
+      "file": "control.csv",
+      "preset": "PNEZD",
+      "points": 4,
+      "kind": "control"
+    },
+    "lesson_3": {
+      "file": "existing_ground.csv",
+      "preset": "PNEZD",
+      "rows_read": 78,
+      "problems": 1,
+      "problem_rule": "SRV-003",
+      "problem_point": "EG-045",
+      "duplicate_policy": "keep_first",
+      "points_after_import": 77
+    },
+    "lesson_4": {
+      "length_m": 612.4,
+      "f_e_m": 0.042,
+      "f_n_m": -0.031,
+      "misclosure_m": 0.052,
+      "ratio": 11731,
+      "profile_ratio": 10000,
+      "verdict": "pass",
+      "bowditch_leg_m": 158.3,
+      "c_e_m": -0.011,
+      "c_n_m": 0.008,
+      "file": "traverse_legs.csv"
+    },
+    "lesson_5": {
+      "point": "CP2",
+      "e": 389110.0,
+      "n": 5818990.0
+    }
+  },
+  "survey_calc": {
+    "file": "calc_demo.json",
+    "traverse": {
+      "angular_misclosure_sec": 25.0,
+      "angular_correction_sec": -6.25,
+      "angular_k_sec": 15,
+      "angular_allowed_sec": 30.0,
+      "length_m": 612.4,
+      "f_e_m": 0.042,
+      "f_n_m": -0.031,
+      "misclosure_m": 0.052,
+      "ratio": 11731,
+      "min_ratio": 10000,
+      "bowditch_leg_m": 158.3,
+      "c_e_m": -0.011,
+      "c_n_m": 0.008,
+      "lsq": {
+        "redundancy": 3,
+        "sigma0": 1.489,
+        "vtpv": 6.656,
+        "chi2_lower": 0.216,
+        "chi2_upper": 9.348,
+        "chi2_pass": true,
+        "largest_residual": "T1",
+        "largest_standardized": -2.03,
+        "ellipse_a_mm": {
+          "T2": 11.2,
+          "T3": 12.3,
+          "T4": 11.3
+        }
+      }
+    },
+    "level_book": {
+      "misclosure_mm": 5.0,
+      "distance_km": 0.8,
+      "k_mm": 12,
+      "allowed_mm": 10.73,
+      "verdict": "pass",
+      "arithmetic_ok": true,
+      "intermediate": "PEG-1",
+      "intermediate_rl_adjusted": 35.3081,
+      "steps_mm": [
+        -1.9,
+        -1.6,
+        -1.5
+      ],
+      "close_rl_adjusted": 34.69
+    }
+  },
+  "volumes": {
+    "lesson_1": {
+      "surface": "Existing ground",
+      "point_set": "existing_ground.csv",
+      "points": 77,
+      "area_m2": 6000.0
+    },
+    "lesson_2": {
+      "file": "design_pad.xml",
+      "surface": "Pad",
+      "area_m2": 6000.0,
+      "z": 34.3
+    },
+    "lesson_3": {
+      "name": "Platform earthworks",
+      "code": "V-001",
+      "base": "Existing ground",
+      "compare": "Pad",
+      "method": "grid",
+      "cell_size_m": 10.0,
+      "cut_m3": 1470.0,
+      "fill_m3": 270.0,
+      "net_m3": 1200.0,
+      "net_side": "cut",
+      "coverage_pct": 100
+    },
+    "lesson_4": {
+      "boq_position": "Bulk excavation",
+      "unit": "m3",
+      "quantity": "1470.000",
+      "formula": "survey.volume(V-001)",
+      "finding": "VOL-004"
+    },
+    "lesson_5": {
+      "progress_m3": 1470.0
+    },
+    "lesson_6": {
+      "swell_factor": 1.25,
+      "loose_cut_m3": 1837.5
+    }
+  },
+  "profiles": {
+    "traverse_min_ratio": 10000,
+    "coverage_min_pct": 90,
+    "label": "Demo values, not a standard"
+  },
+  "stockpiles": {
+    "name": "Stockpile A",
+    "code": "SP-001",
+    "material": "Aggregate 0/32",
+    "book_tonnes": 8400.0,
+    "base_file": "stockpile_A_base.csv",
+    "survey_file": "stockpile_A_2026-10-12.csv",
+    "surveyed_on": "2026-10-12",
+    "lesson_1": {
+      "book_tonnes": 8400.0
+    },
+    "lesson_2": {
+      "density_t_m3": 1.6,
+      "density_source": "assumed",
+      "cell_size_m": 5.0,
+      "coverage_pct": 100,
+      "volume_m3": 4992.0,
+      "tonnes": 7987.2,
+      "variance_t": -412.8,
+      "variance_pct": -4.91,
+      "finding": "STK-001"
+    },
+    "lesson_3": {
+      "density_t_m3": 1.62,
+      "density_source": "measured",
+      "tonnes": 8087.04,
+      "variance_t": -312.96,
+      "variance_pct": -3.73,
+      "finding": "STK-002",
+      "tolerance_pct": 3
+    },
+    "lesson_4": {
+      "movement": "WASTE",
+      "quantity_t": 312.96,
+      "signed_t": -312.96,
+      "book_after_t": 8087.04
+    },
+    "lesson_5": {
+      "report_density_source": "measured"
+    }
+  },
+  "mine_survey": {
+    "period": "Oct 2026",
+    "period_label": "2026-10",
+    "unit": "Pit N Bench 2",
+    "unit_type": "bench",
+    "plan_file": "pit_plan_2026-10.csv",
+    "start_file": "pit_2026-10-01.csv",
+    "end_file": "pit_2026-10-31.csv",
+    "truck_file": "truck_loads_2026-10.csv",
+    "lesson_1": {
+      "plan_m3": 12500.0,
+      "plan_t": 25000.0,
+      "density_t_m3": 2.0
+    },
+    "lesson_2": {
+      "cell_size_m": 10.0,
+      "actual_m3": 11870.0,
+      "coverage_pct": 100.0
+    },
+    "lesson_3": {
+      "compliance_pct": 94.96,
+      "band_pct": [
+        95,
+        105
+      ],
+      "finding": "MIN-001"
+    },
+    "lesson_4": {
+      "loads": 620,
+      "payload_t": 40.0,
+      "truck_t": 24800.0,
+      "survey_t": 23740.0,
+      "truck_factor_pct": 4.47,
+      "truck_check_pct": 3,
+      "finding": "MIN-002"
+    },
+    "lesson_5": {
+      "claim_quantity_m3": 11870.0
+    }
+  },
+  "payment": {
+    "contract": {
+      "code": "RY-SUB-EW-01",
+      "title": "Earthworks subcontract - Riverside Yard",
+      "currency": "EUR",
+      "retention_pct": 5,
+      "start_date": "2026-10-01",
+      "end_date": "2027-03-31",
+      "line": {
+        "code": "1.02",
+        "description": "Bulk excavation",
+        "unit": "m3",
+        "quantity": 1500,
+        "unit_rate": 9.5,
+        "total_value": "14250.00"
+      },
+      "certificate": {
+        "number": "PC-01",
+        "period_start": "2026-10-01",
+        "period_end": "2026-10-31",
+        "status": "draft"
+      }
+    },
+    "lesson_1": {
+      "quantity_kind": "cut",
+      "quantity": "1470.000",
+      "percent_to_date": "98.0000",
+      "period_qty": "1470.0000",
+      "period_value": "13965.0000",
+      "findings": []
+    },
+    "lesson_2": {
+      "gross_amount": "13965.00",
+      "retention_amount": "698.25",
+      "net_due": "13266.75"
+    },
+    "lesson_3": {
+      "quantity_kind": "loose_cut",
+      "quantity": "1837.500",
+      "finding": "MQ-001",
+      "period_value": "14250.0000"
+    },
+    "haul": {
+      "haulier": "Uferbau Transport GmbH",
+      "currency": "EUR",
+      "rate_per_load": 95,
+      "truck_capacity_m3": 14,
+      "material": {
+        "code": "clay_loose",
+        "name": "Excavated clay, loose",
+        "density_t_m3": 1.5
+      },
+      "origin": "Riverside Yard, cut area",
+      "offsite_destination": "Licensed soil tip",
+      "internal_destination": "Fill area on site",
+      "offsite_position": "Disposal of surplus off site",
+      "internal_position": "Fill to platform, compacted in layers",
+      "receiver": "Site supervisor",
+      "tickets": [
+        {
+          "number": "HT-0101",
+          "date": "2026-10-05",
+          "loads": 12,
+          "plate": "B-UB 1201"
+        },
+        {
+          "number": "HT-0102",
+          "date": "2026-10-06",
+          "loads": 13,
+          "plate": "B-UB 1202"
+        },
+        {
+          "number": "HT-0103",
+          "date": "2026-10-07",
+          "loads": 11,
+          "plate": "B-UB 1203",
+          "net_t": 231.0
+        },
+        {
+          "number": "HT-0104",
+          "date": "2026-10-08",
+          "loads": 12,
+          "plate": "B-UB 1201",
+          "internal": true
+        },
+        {
+          "number": "HT-0105",
+          "date": "2026-10-09",
+          "loads": 14,
+          "plate": "B-UB 1204"
+        },
+        {
+          "number": "HT-0106",
+          "date": "2026-10-12",
+          "loads": 10,
+          "plate": "B-UB 1202",
+          "net_t": 210.0
+        },
+        {
+          "number": "HT-0107",
+          "date": "2026-10-13",
+          "loads": 12,
+          "plate": "B-UB 1203"
+        },
+        {
+          "number": "HT-0108",
+          "date": "2026-10-14",
+          "loads": 13,
+          "plate": "B-UB 1204",
+          "internal": true
+        },
+        {
+          "number": "HT-0109",
+          "date": "2026-10-15",
+          "loads": 11,
+          "plate": "B-UB 1201",
+          "net_t": 231.0
+        },
+        {
+          "number": "HT-0110",
+          "date": "2026-10-16",
+          "loads": 12,
+          "plate": "B-UB 1202"
+        }
+      ],
+      "invoice": {
+        "number": "UT-2026-1031",
+        "date": "2026-10-31",
+        "period_from": "2026-10-01",
+        "period_to": "2026-10-31",
+        "billed_loads": {
+          "HT-0105": 16
+        }
+      }
+    },
+    "lesson_4": {
+      "tickets": 10,
+      "loads": 120,
+      "hauled_m3": "1680.000",
+      "weighbridge_m3": "448.000",
+      "capacity_m3": "1232.000",
+      "bank": {
+        "excavated_m3": "1470.000",
+        "difference_m3": "210.000",
+        "difference_pct": "14.29",
+        "finding": "haul_variance.hauled_vs_excavated"
+      },
+      "loose": {
+        "swell_factor": 1.25,
+        "excavated_m3": "1837.500",
+        "difference_m3": "-157.500",
+        "difference_pct": "-8.57",
+        "within_threshold": true
+      },
+      "threshold_pct": 10
+    },
+    "lesson_5": {
+      "invoice_status": "discrepancies",
+      "mismatch_ticket": "HT-0105",
+      "mismatch_status": "quantity_mismatch",
+      "invoiced_total": "11590.00",
+      "expected_total": "11400.00"
+    }
+  },
+  "geodesy": {
+    "note": "Course numbers for ground to grid on the Riverside Yard site (UTM 33N, near 52.51 N 13.37 E)",
+    "epsg": 32633,
+    "site": {
+      "e": 389080.0,
+      "n": 5819030.0,
+      "height_m": 34.3
+    },
+    "projection_scale_k": 0.999751,
+    "elevation_factor": 0.9999946,
+    "combined_scale_factor": 0.9997456,
+    "ground_m": 100.0,
+    "grid_m": 99.975,
+    "difference_mm": 25.4
+  }
+}
