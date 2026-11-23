@@ -12,12 +12,13 @@ This guide explains how to deploy this project on your self-hosted **Coolify** i
 4. Set **Build Pack** to:
    * **Docker Compose** (Coolify automatically detects the root `docker-compose.yml`).
 5. In **Environment Variables** (optional, defaults are already provided):
+   * `HOST_PORT`: Host port mapping (default is `8088` to avoid port `8080` collisions on VPS hosts).
    * `POSTGRES_PASSWORD`: A secure database password (e.g. generated via password manager).
    * `JWT_SECRET`: A secure random secret string (e.g. `openssl rand -hex 32`).
    * `ALLOWED_ORIGINS`: Set to your domain (e.g. `https://erp.yourdomain.com`).
 6. In **Domains**:
    * Add your custom domain (e.g. `https://erp.yourdomain.com`). Coolify will automatically configure Traefik with free Let's Encrypt SSL.
-   * Ensure the destination port is set to **`8080`**.
+   * Ensure the destination internal port is set to **`8080`**.
 7. Click **Deploy**.
 
 ---
